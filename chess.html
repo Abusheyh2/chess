@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Instant Stockfish Chess</title>
+    
+    <!-- CSS Dependencies -->
+    <link rel="stylesheet" href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css">
+    
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background-color: #1a1a1a;
+            color: #f0f0f0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+
+        /* Error Box for Chrome/Edge file:// issues */
+        #error-box {
+            display: none;
+            background-color: #ff4444;
+            color: white;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            max-width: 500px;
+            text-align: center;
+            font-weight: bold;
+            box-shadow: 0 0 15px rgba(255, 0, 0, 0.5);
+        }
+
+        .game-container {
+            display: flex;
+            gap: 20px;
+            align-items: flex-start;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        #myBoard {
+            width: 400px;
+            border: 5px solid #333; /* Default border */
+        }
+        
+        /* Visual cue when engine is thinking */
+        #myBoard.thinking {
+            border-color: #f39c12; /* Orange border when thinking */
+        }
+
+        .controls {
+            background: #2d2d2d;
+            padding: 20px;
+            border-radius: 8px;
+            width: 300px;
+        }
+
+        select, button {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 15px;
+            border-radius: 5px;
+            border: 1px solid #444;
+            font-size: 16px;
+        }
+
+        select { background: #333; color: white; }
+        button { background: #27ae60; color: white; cursor: pointer; font-weight: bold; border: none; }
+        button:hover { background: #219150; }
+
+        #status, #engineStatus { margin-top: 10px; font-size: 0.9em; color: #aaa; }
+    </style>
+</head>
+<body>
+
+    <!-- ERROR WARNING -->
+    <div id="error-box">
+        ⚠️ <strong>ENGINE BLOCKED</strong> ⚠️<br><br>
+        Your browser (Chrome/Edge) is blocking the Chess Engine because you opened this as a local file.<br><br>
+        <strong>FIX:</strong> Open this file in <u>Firefox</u> OR upload it to a site (like GitHub/Netlify).
+    </div>
+
+    <h1>Chess vs Stockfish (Fast Mode)</h1>
+
+    <div class="game-container">
+        <div id="myBoard"></div>
+
+        <div class="controls">
+            <label><strong>Difficulty Level:</strong></label>
+            <select id="difficulty">
+                <!-- Low depths for instant moves -->
+                <option value="800">Novice (Instant)</option>
+                <option value="1200">Beginner (Fast)</option>
+                <option value="1600" selected>Intermediate</option>
+                <option value="2000">Advanced</option>
+                <option value="2850">Grandmaster</option>
+            </select>
+
+            <button id="newGameBtn">New Game</button>
+            
+            <div id="status">White to move</div>
+            <div id="engineStatus" style="color: #f39c12">Engine: Ready</div>
+        </div>
+    </div>
+
+    <!-- Dependencies -->
+    <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+    <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+
+    <script>
+        var board = null;
+        var game = new Chess();
+        var stockfish = null;
+        var currentElo = 1600;
+
+        // 1. Initialize Stockfish with Error Handling
+        try {
+            stockfish = new Worker('https://cdnjs.cloudflare.com/ajax/libs/stockfish-js/10.0.0/stockfish.js');
+            
+            // Detect if worker fails immediately (Chrome local file block)
+            stockfish.onerror = function(e) {
+                document.getElementById('error-box').style.display = 'block';
+                $('#engineStatus').text("Engine Failed to Load");
+            };
+        } catch (e) {
+            document.getElementById('error-box').style.display = 'block';
+        }
+
+        // 2. Handle Engine Reply
+        if (stockfish) {
+            stockfish.onmessage = function(event) {
+                if (event.data && event.data.startsWith("bestmove")) {
+                    var bestMove = event.data.split(" ")[1];
+                    
+                    // Make move
+                    game.move(bestMove, { sloppy: true });
+                    board.position(game.fen());
+                    
+                    // UI Updates
+                    updateStatus();
+                    $('#myBoard').removeClass('thinking'); // Remove orange border
+                    $('#engineStatus').text("Your turn");
+                }
+            };
+        }
+
+        // 3. Configure Difficulty & Speed
+        function setEngineSettings() {
+            var val = parseInt($('#difficulty').val());
+            currentElo = val;
+            
+            if (!stockfish) return;
+
+            stockfish.postMessage("uci");
+            
+            // Strength Settings
+            if (currentElo >= 2850) {
+                stockfish.postMessage("setoption name UCI_LimitStrength value false");
+            } else {
+                stockfish.postMessage("setoption name UCI_LimitStrength value true");
+                stockfish.postMessage("setoption name UCI_Elo value " + currentElo);
+            }
+        }
+
+        // 4. Trigger Engine Move
+        function makeEngineMove() {
+            if (game.game_over()) return;
+            if (!stockfish) return;
+
+            // Visual Cue: Board turns orange
+            $('#myBoard').addClass('thinking');
+            $('#engineStatus').text("Thinking...");
+
+            stockfish.postMessage("position fen " + game.fen());
+
+            // --- SPEED SETTINGS ---
+            // If Novice (800): Depth 1 (Instant)
+            // If GM: Move Time 800ms (Very Fast)
+            
+            if (currentElo <= 1200) {
+                stockfish.postMessage("go depth 1"); // Instant
+            } else if (currentElo <= 1600) {
+                stockfish.postMessage("go depth 4"); // Super Fast
+            } else {
+                // For high levels, limit by time so it doesn't freeze
+                stockfish.postMessage("go movetime 800"); // 0.8 seconds max
+            }
+        }
+
+        // 5. Game Logic
+        function onDrop (source, target) {
+            var move = game.move({
+                from: source,
+                to: target,
+                promotion: 'q'
+            });
+
+            if (move === null) return 'snapback';
+
+            updateStatus();
+            // Move engine almost immediately (50ms delay)
+            window.setTimeout(makeEngineMove, 50);
+        }
+
+        function onDragStart (source, piece) {
+            if (game.game_over()) return false;
+            if ((game.turn() === 'w' && piece.search(/^b/) !== -1) ||
+                (game.turn() === 'b' && piece.search(/^w/) !== -1)) {
+                return false;
+            }
+        }
+
+        function onSnapEnd () { board.position(game.fen()); }
+
+        function updateStatus () {
+            var status = '';
+            var moveColor = (game.turn() === 'b') ? 'Black' : 'White';
+
+            if (game.in_checkmate()) {
+                status = 'Game Over: ' + moveColor + ' Checkmated.';
+            } else if (game.in_draw()) {
+                status = 'Game Over: Draw.';
+            } else {
+                status = moveColor + ' to move';
+                if (game.in_check()) status += ' (CHECK!)';
+            }
+            $('#status').text(status);
+        }
+
+        var config = {
+            draggable: true,
+            position: 'start',
+            pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png',
+            onDragStart: onDragStart,
+            onDrop: onDrop,
+            onSnapEnd: onSnapEnd
+        }
+        board = Chessboard('myBoard', config);
+
+        // Events
+        $('#difficulty').change(setEngineSettings);
+        
+        $('#newGameBtn').click(function() {
+            game.reset();
+            board.start();
+            updateStatus();
+            setEngineSettings();
+            $('#myBoard').removeClass('thinking');
+        });
+
+        // Initialize
+        setEngineSettings();
+        
+        // Double Check for file:// protocol
+        if (window.location.protocol === 'file:') {
+            // We just warn them in console, the onError above handles the UI
+            console.warn("Running from file:// - Web Workers might be blocked.");
+        }
+
+    </script>
+</body>
+</html>
