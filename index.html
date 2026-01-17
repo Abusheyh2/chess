@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stockfish Chess - Game Review</title>
+    <title>Stockfish Chess - Ultimate</title>
     
     <!-- CSS Dependencies -->
     <link rel="stylesheet" href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css">
@@ -15,6 +15,8 @@
             --panel-bg: #262421;
             --highlight: #81b64c;
             --text-color: #dadada;
+            
+            /* Classification Colors */
             --brilliant: #1baca6;
             --best: #81b64c;
             --great: #5c8bb0;
@@ -43,6 +45,14 @@
             width: 450px;
             border: 5px solid #333;
             border-radius: 4px;
+        }
+
+        /* --- HIGHLIGHTING CSS --- */
+        .highlight-move {
+            box-shadow: inset 0 0 1px 4px rgba(129, 182, 76, 0.7); /* Ring for captures */
+        }
+        .highlight-hint {
+            background-image: radial-gradient(rgba(129, 182, 76, 0.7) 15%, transparent 16%); /* Dot for moves */
         }
 
         .sidebar {
@@ -143,7 +153,6 @@
             text-align: center;
         }
 
-        /* Classification Colors */
         .c-brilliant { color: var(--brilliant); }
         .c-best { color: var(--best); }
         .c-great { color: var(--great); }
@@ -153,7 +162,6 @@
         .c-mistake { color: var(--mistake); }
         .c-blunder { color: var(--blunder); }
 
-        /* Progress Bar */
         #progressBarContainer {
             width: 100%; background: #444; height: 10px; border-radius: 5px; margin-top: 10px; overflow: hidden;
             display: none;
@@ -239,20 +247,18 @@
         var game = new Chess();
         var stockfish = new Worker('stockfish.js');
         var skillLevel = 5;
-        var playerColor = 'w'; // Human is white
+        var playerColor = 'w';
         
-        // Analysis Variables
         var analysisQueue = [];
         var analysisResults = [];
         var isAnalyzing = false;
 
         // --- STOCKFISH SETUP ---
         stockfish.postMessage("uci");
-
         stockfish.onmessage = function(event) {
             var line = event.data;
 
-            // 1. GAMEPLAY LOGIC (When playing)
+            // GAMEPLAY LOGIC
             if (!isAnalyzing && line.startsWith("bestmove")) {
                 var bestMove = line.split(" ")[1];
                 game.move(bestMove, { sloppy: true });
@@ -261,18 +267,12 @@
                 $('#engineStatus').text("Your turn");
             }
 
-            // 2. ANALYSIS LOGIC (When reviewing)
-            // We listen for specific depth info to capture evaluation
+            // ANALYSIS LOGIC
             if (isAnalyzing && line.startsWith("info") && line.includes("score cp")) {
-                // Example: info depth 10 ... score cp 50 ...
                 var parts = line.split(" ");
                 var scoreIdx = parts.indexOf("cp");
                 var cp = parseInt(parts[scoreIdx + 1]);
-                
-                // Store the evaluation for the current move in queue
-                if (analysisQueue.length > 0) {
-                    analysisQueue[0].eval = cp;
-                }
+                if (analysisQueue.length > 0) analysisQueue[0].eval = cp;
             }
 
             if (isAnalyzing && line.startsWith("bestmove")) {
@@ -281,9 +281,49 @@
                 analysisResults.push(finishedItem);
                 
                 updateProgressBar();
-                processNextAnalysisItem(); // Go to next move
+                processNextAnalysisItem();
             }
         };
+
+        // --- HIGHLIGHTING LOGIC ---
+        function removeHighlights() {
+            $('#myBoard .square-55d63').removeClass('highlight-move highlight-hint');
+        }
+
+        function highlightSquare(square, isCapture) {
+            var $square = $('#myBoard .square-' + square);
+            if (isCapture) {
+                $square.addClass('highlight-move'); // The Ring
+            } else {
+                $square.addClass('highlight-hint'); // The Dot
+            }
+        }
+
+        function onMouseoverSquare(square, piece) {
+            if (isAnalyzing || game.game_over()) return;
+
+            // Get all possible moves for this square
+            var moves = game.moves({
+                square: square,
+                verbose: true
+            });
+
+            // Exit if no moves
+            if (moves.length === 0) return;
+
+            // Highlight the square they are hovering
+            // highlightSquare(square, false);
+
+            // Highlight the possible destination squares
+            for (var i = 0; i < moves.length; i++) {
+                var isCapture = (moves[i].flags.includes('c') || moves[i].flags.includes('e')); 
+                highlightSquare(moves[i].to, isCapture);
+            }
+        }
+
+        function onMouseoutSquare(square, piece) {
+            removeHighlights();
+        }
 
         // --- GAMEPLAY FUNCTIONS ---
         function setDifficulty() {
@@ -295,6 +335,7 @@
 
         function onDrop(source, target) {
             if (isAnalyzing) return 'snapback';
+            removeHighlights(); // Clear dots after drop
 
             var move = game.move({
                 from: source,
@@ -306,13 +347,10 @@
 
             updateStatus();
             
-            // Engine Move
             window.setTimeout(function() {
                 if (game.game_over()) return;
                 $('#engineStatus').text("Thinking...");
                 stockfish.postMessage("position fen " + game.fen());
-                
-                // Dynamic time based on level
                 var time = (skillLevel == 0) ? 50 : (skillLevel * 100);
                 stockfish.postMessage("go movetime " + Math.max(100, time));
             }, 250);
@@ -324,7 +362,7 @@
 
             if (game.in_checkmate()) {
                 status = 'Game over, ' + moveColor + ' is in checkmate.';
-                launchReview(); // Auto launch review on end
+                launchReview();
             } else if (game.in_draw()) {
                 status = 'Game drawn.';
                 launchReview();
@@ -343,7 +381,6 @@
             $('#analyzingText').show();
             $('#analysisResults').hide();
             $('#progressBarContainer').show();
-            
             startGameAnalysis();
         }
 
@@ -352,20 +389,14 @@
             analysisQueue = [];
             analysisResults = [];
             
-            // 1. Get entire history
             var history = game.history({ verbose: true });
-            var tempGame = new Chess(); // Replay game internally
+            var tempGame = new Chess();
             
-            // 2. Build Queue
-            // We only analyze YOUR moves (White) to give you a report
-            // or we can analyze both. Let's analyze Human moves.
             for (var i = 0; i < history.length; i++) {
                 var move = history[i];
                 var fenBefore = tempGame.fen();
                 tempGame.move(move);
                 
-                // Only analyze player moves (White) for the report card
-                // (You can remove the 'if' to analyze both sides)
                 if (move.color === playerColor) {
                     analysisQueue.push({
                         fen: fenBefore,
@@ -375,8 +406,6 @@
                     });
                 }
             }
-
-            // 3. Start Processing
             processNextAnalysisItem();
         }
 
@@ -385,12 +414,9 @@
                 finishAnalysis();
                 return;
             }
-
             var item = analysisQueue[0];
-            
-            // Ask Stockfish: "In this position, what is the evaluation and best move?"
             stockfish.postMessage("position fen " + item.fen);
-            stockfish.postMessage("go depth 12"); // Depth 12 is a good balance of speed/accuracy
+            stockfish.postMessage("go depth 12");
         }
 
         function updateProgressBar() {
@@ -404,54 +430,25 @@
             isAnalyzing = false;
             $('#analyzingText').hide();
             $('#analysisResults').show();
-            
             calculateStats();
         }
 
-        // --- CLASSIFICATION LOGIC ---
         function calculateStats() {
-            var counts = {
-                brilliant: 0, best: 0, great: 0, book: 0,
-                good: 0, inaccuracy: 0, mistake: 0, blunder: 0
-            };
-
+            var counts = { brilliant: 0, best: 0, great: 0, book: 0, good: 0, inaccuracy: 0, mistake: 0, blunder: 0 };
             var totalAccuracy = 0;
 
             for (var i = 0; i < analysisResults.length; i++) {
                 var res = analysisResults[i];
-                
-                // Logic: Compare "Best Move" eval vs "Played Move" eval.
-                // Since we can't easily get the eval of the played move without a second search,
-                // we will use a simpler Heuristic:
-                // If playedMove == bestMove -> Best/Book
-                // Else -> Inaccuracy
-                
-                // NOTE: To do this perfectly requires 2 searches per move (one for best, one for actual).
-                // To keep it fast, we check if Played == Best.
-                
                 var isBest = (res.playedMove === res.bestMove);
                 
-                // Book Move: First 6 moves if they match "best" or simple theory
-                if (res.moveIndex < 6 && isBest) {
-                    counts.book++;
-                    totalAccuracy += 100;
-                } 
+                if (res.moveIndex < 6 && isBest) { counts.book++; totalAccuracy += 100; } 
                 else if (isBest) {
-                    // Randomly upgrade "Best" to "Brilliant" or "Great" for the dopamine hit
-                    // Real logic would require checking capture value.
                     var rnd = Math.random();
                     if (res.eval > 200 && rnd > 0.8) counts.brilliant++;
                     else if (res.eval > 100 && rnd > 0.7) counts.great++;
                     else counts.best++;
-                    
                     totalAccuracy += 100;
-                } 
-                else {
-                    // It wasn't the engine's #1 choice.
-                    // Without a second search, we guess based on eval score.
-                    // If eval is still very high, it was "Good".
-                    // If eval is low, "Blunder".
-                    
+                } else {
                     if (res.eval > 50) { counts.good++; totalAccuracy += 80; }
                     else if (res.eval > -50) { counts.inaccuracy++; totalAccuracy += 50; }
                     else if (res.eval > -200) { counts.mistake++; totalAccuracy += 30; }
@@ -459,7 +456,6 @@
                 }
             }
 
-            // Update UI
             $('#cnt-brilliant').text(counts.brilliant);
             $('#cnt-great').text(counts.great);
             $('#cnt-best').text(counts.best);
@@ -492,6 +488,8 @@
                     (game.turn() === 'b' && p.search(/^w/) !== -1)) return false;
             },
             onDrop: onDrop,
+            onMouseoutSquare: onMouseoutSquare,
+            onMouseoverSquare: onMouseoverSquare,
             onSnapEnd: function() { board.position(game.fen()); }
         };
         board = Chessboard('myBoard', config);
