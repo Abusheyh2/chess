@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stockfish Chess - Fixed</title>
+    <title>Stockfish Chess - Local Version</title>
     
     <!-- CSS Dependencies -->
     <link rel="stylesheet" href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css">
@@ -20,20 +20,6 @@
             min-height: 100vh;
             margin: 0;
         }
-
-        #error-box {
-            display: none;
-            background-color: #d32f2f;
-            color: white;
-            padding: 15px;
-            margin-bottom: 20px;
-            border-radius: 8px;
-            max-width: 500px;
-            text-align: left;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
-        }
-        
-        #error-box code { background: rgba(0,0,0,0.2); padding: 2px 5px; border-radius: 4px; }
 
         .game-container {
             display: flex;
@@ -71,29 +57,30 @@
         button:hover { background: #219150; }
 
         #status, #engineStatus { margin-top: 10px; font-size: 0.9em; color: #aaa; }
+        
+        #error-msg {
+            color: #ff4444;
+            display: none;
+            margin-bottom: 10px;
+            border: 1px solid #ff4444;
+            padding: 10px;
+            background: rgba(255, 0, 0, 0.1);
+        }
     </style>
 </head>
 <body>
 
-    <div id="error-box">
-        <h3>⚠️ Engine Failed to Load</h3>
-        <p>If you see this, the "Blob Trick" failed. Your browser is strictly blocking the script.</p>
-        <p><strong>The Final Solution:</strong></p>
-        <ol>
-            <li>Create a folder.</li>
-            <li>Download this file: <a href="https://cdnjs.cloudflare.com/ajax/libs/stockfish-js/10.0.0/stockfish.js" target="_blank" style="color:#fff">stockfish.js</a></li>
-            <li>Save it in the folder as <code>stockfish.js</code></li>
-            <li>Save this HTML code in the same folder as <code>index.html</code>.</li>
-            <li>Open <code>index.html</code>.</li>
-        </ol>
-    </div>
-
-    <h1>Chess vs Stockfish (Fixed)</h1>
+    <h1>Chess vs Stockfish</h1>
 
     <div class="game-container">
         <div id="myBoard"></div>
 
         <div class="controls">
+            <div id="error-msg">
+                <strong>Error:</strong> Could not load "stockfish.js".<br>
+                Make sure the file is in the same folder!
+            </div>
+
             <label>Difficulty:</label>
             <select id="difficulty">
                 <option value="800">Novice (Instant)</option>
@@ -121,34 +108,26 @@
         var stockfish = null;
         var currentElo = 1600;
 
-        // --- THE FIX: BLOB WORKER ---
-        // We create a "fake" local file that imports the CDN script.
-        // This bypasses the "new Worker('http...')" restriction.
+        // --- LOAD LOCAL ENGINE ---
         try {
-            var stockfishUrl = 'https://cdnjs.cloudflare.com/ajax/libs/stockfish-js/10.0.0/stockfish.js';
-            var blob = new Blob(["importScripts('" + stockfishUrl + "');"], {type: 'application/javascript'});
-            var blobUrl = window.URL.createObjectURL(blob);
-            
-            stockfish = new Worker(blobUrl);
+            stockfish = new Worker('stockfish.js');
             
             stockfish.onerror = function(e) {
-                console.error(e);
-                $('#error-box').show();
-                $('#engineStatus').text("Error: Engine blocked");
+                console.error("Worker Error:", e);
+                $('#error-msg').show();
+                $('#engineStatus').text("Engine Failed");
             };
             
-            // Test if engine is alive
+            // Test connection
             stockfish.postMessage("uci");
-
-        } catch (err) {
-            console.error(err);
-            $('#error-box').show();
+        } catch (e) {
+            console.error(e);
+            $('#error-msg').show();
         }
 
         // Handle Engine Responses
         if (stockfish) {
             stockfish.onmessage = function(event) {
-                // Debug: Check if engine is ready
                 if (event.data === 'uciok') {
                     $('#engineStatus').text("Engine: Ready");
                 }
